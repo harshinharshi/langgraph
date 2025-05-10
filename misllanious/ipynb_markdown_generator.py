@@ -1,10 +1,3 @@
-"""
-IPython Notebook Annotator with Markdown Comments
-
-Enhances a Jupyter notebook by inserting LLM-generated markdown explanations
-above each code cell, with logging and inline comments for clarity.
-"""
-
 import json
 import os
 import argparse
@@ -13,7 +6,7 @@ from typing import Dict, List, Any
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from a .env file (like API keys)
 
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
 
@@ -50,7 +43,7 @@ def get_output_text(outputs: List[Dict]) -> str:
 
 def analyze_code(code: str, cell_number: int, outputs: List[Dict]) -> str:
     """Generate markdown documentation using LLM for a code block."""
-    llm = ChatOpenAI(model="gpt-3.5-turbo")  # Use OpenAI's chat model
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
     output_text = get_output_text(outputs)
 
     # Craft the prompt for LLM
@@ -73,11 +66,41 @@ def analyze_code(code: str, cell_number: int, outputs: List[Dict]) -> str:
     """
 
     # Invoke the LLM with the prompt and return its markdown response
-    return llm.invoke([HumanMessage(content=prompt)]).content
+    response = llm.invoke([HumanMessage(content=prompt)]).content
+    # Remove markdown formatting if present
+    if response.startswith("```markdown"):
+        response = response.replace("```markdown", "", 1).strip()
+    if response.endswith("```"):
+        response = response.rsplit("```", 1)[0].strip()
+    return response
+
+
+
+def generate_commented_code(code: str) -> str:
+    """Generate inline comments for each line of code using LLM."""
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+
+    # Craft the prompt to generate comments for each line of code
+    prompt = f"""
+    Provide inline comments for the following Python code. 
+    Comment each line with an explanation of what it does, using Python-style comments (# comment):
+
+    ```python
+    {code}
+    ```
+
+    Output only the commented code, maintaining the original line structure.
+    """
+    
+    # Invoke the LLM to get commented code
+    response = llm.invoke([HumanMessage(content=prompt)]).content
+    # Ensure response is formatted correctly (if LLM includes code block formatting)
+    return response.replace('```python', '').replace('```', '').strip()
+
 
 
 def create_annotated_notebook(input_path: str) -> Dict[str, Any]:
-    """Create a new notebook with markdown inserted above each code cell."""
+    """Create a new notebook with markdown inserted above each code cell and inline comments added."""
     # Load the original notebook
     original_nb = load_notebook(input_path)
 
@@ -96,8 +119,10 @@ def create_annotated_notebook(input_path: str) -> Dict[str, Any]:
 
         try:
             markdown = analyze_code(code, i, outputs)
+            commented_code = generate_commented_code(code)
         except Exception as e:
             markdown = f"*Error generating markdown for Cell {i}: {e}*"
+            commented_code = code  # Fallback to original code if LLM fails
 
         # Insert markdown explanation BEFORE the code cell
         new_cells.append({
@@ -106,13 +131,13 @@ def create_annotated_notebook(input_path: str) -> Dict[str, Any]:
             "source": markdown.splitlines(keepends=True)  # Preserve line breaks
         })
 
-        # Insert the original code cell
+        # Insert the original code cell with inline comments
         new_cells.append({
             "cell_type": "code",
             "execution_count": None,
             "metadata": {},
             "outputs": [],
-            "source": code.splitlines(keepends=True)
+            "source": commented_code.splitlines(keepends=True)  # Insert commented code
         })
 
     # Build the new notebook structure
